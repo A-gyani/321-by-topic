@@ -57,6 +57,14 @@ h1 em{font-style:italic;font-weight:400;color:var(--idea)}
 .select:after{content:"";position:absolute;right:16px;top:50%;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-70%) rotate(45deg);pointer-events:none}
 .search{flex:1 1 220px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--ink);font:inherit;font-size:15px;outline:none;box-shadow:var(--shadow)}
 .search:focus{border-color:var(--idea)}
+.combo-input{width:100%;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px 40px 12px 14px;font:inherit;font-size:15px;font-weight:500;box-shadow:var(--shadow);cursor:text;outline:none;text-overflow:ellipsis}
+.combo-input:focus{border-color:var(--idea)}
+.combo-list{position:absolute;left:0;right:0;top:calc(100% + 6px);margin:0;padding:6px;list-style:none;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);max-height:320px;overflow:auto;z-index:60}
+.combo-list li{padding:9px 12px;border-radius:8px;cursor:pointer;font-size:15px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.combo-list li .n{color:var(--muted);font-size:13px;font-weight:400}
+.combo-list li:hover,.combo-list li.active{background:var(--chip)}
+.combo-list li[aria-selected="true"]{color:var(--idea);font-weight:600}
+.combo-empty{padding:9px 12px;color:var(--muted);font-style:italic;cursor:default}
 .pills{display:flex;gap:6px;flex-wrap:wrap}
 .pill{border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;padding:7px 13px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .pill i{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.9}
@@ -121,7 +129,10 @@ footer a{color:var(--muted)}
 <div class="wrap">
   <div class="controls">
     <div class="row">
-      <div class="select"><select id="group" aria-label="Choose a topic"></select></div>
+      <div class="select" id="combo">
+        <input class="combo-input" id="groupInput" type="text" role="combobox" aria-controls="groupList" aria-expanded="false" aria-autocomplete="list" autocomplete="off" aria-label="Choose or search a topic" placeholder="Search topics…">
+        <ul class="combo-list" id="groupList" role="listbox" hidden></ul>
+      </div>
       <input class="search" id="q" type="search" placeholder="Search…" aria-label="Search">
     </div>
     <div class="row">
@@ -193,11 +204,27 @@ function matches(it){
   if(S.view==='topics') return it.topics.includes(S.key);
   return it.kind==='quote' && it.author===S.key;
 }
-function renderSelect(){
-  const g = groups();
-  if(!S.key || !g.some(x=>x[0]===S.key)) S.key = g.length? g[0][0] : null;
-  $('#group').innerHTML = g.map(([k,n])=>`<option value="${esc(k)}" ${k===S.key?'selected':''}>${esc(k)} (${n})</option>`).join('');
+let curOpts = [], activeIdx = -1;
+function renderCombo(){
+  curOpts = groups();
+  if(!S.key || !curOpts.some(x=>x[0]===S.key)) S.key = curOpts.length? curOpts[0][0] : null;
+  const gi=$('#groupInput');
+  if(document.activeElement!==gi) gi.value = S.key||'';
+  gi.placeholder = S.view==='authors' ? 'Search authors…' : 'Search topics…';
+  if(!$('#groupList').hidden) openList(gi.value);
 }
+function openList(filter){
+  const f=(filter||'').trim().toLowerCase();
+  const items = curOpts.filter(([k])=>k.toLowerCase().includes(f));
+  const ul=$('#groupList');
+  ul.innerHTML = items.length
+    ? items.map(([k,n])=>`<li role="option" data-key="${esc(k)}" aria-selected="${k===S.key}"><span>${esc(k)}</span><span class="n">${n}</span></li>`).join('')
+    : '<li class="combo-empty">No matches</li>';
+  ul.hidden=false; $('#groupInput').setAttribute('aria-expanded','true'); activeIdx=-1;
+}
+function closeList(){ $('#groupList').hidden=true; $('#groupInput').setAttribute('aria-expanded','false'); activeIdx=-1; }
+function setActive(opts){ opts.forEach((o,i)=>o.classList.toggle('active',i===activeIdx)); if(opts[activeIdx]) opts[activeIdx].scrollIntoView({block:'nearest'}); }
+function selectKey(k){ S.key=k; S.q=''; S.random=null; S.saved=false; S.shown=PAGE; $('#q').value=''; $('#groupInput').value=k; closeList(); updateSavedPill(); render(); $('#groupInput').blur(); }
 const paras = t=>t.split('\n').map(p=>'<p>'+esc(p)+'</p>').join('');
 function card(it){
   const chips = it.topics.map(t=>`<button class="chip" data-topic="${esc(t)}">${esc(t)}</button>`).join('');
@@ -229,8 +256,21 @@ function syncPills(){
   document.querySelectorAll('#kind .pill').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===S.kind));
   document.querySelectorAll('#view .pill[data-v]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===S.view));
 }
-function render(){ $('.select').style.display = S.saved ? 'none' : ''; renderSelect(); renderFeed(); }
-$('#group').onchange=e=>{ S.key=e.target.value; S.q=''; S.random=null; S.saved=false; S.shown=PAGE; $('#q').value=''; updateSavedPill(); render(); };
+function render(){ $('.select').style.display = S.saved ? 'none' : ''; renderCombo(); renderFeed(); }
+(function(){ const gi=$('#groupInput'), gl=$('#groupList');
+  gi.addEventListener('focus',()=>{ gi.select(); openList(''); });
+  gi.addEventListener('click',()=>{ if(gl.hidden) openList(gi.value); });
+  gi.addEventListener('input',()=>openList(gi.value));
+  gi.addEventListener('keydown',e=>{
+    const opts=[...gl.querySelectorAll('li[data-key]')];
+    if(e.key==='ArrowDown'){ e.preventDefault(); if(gl.hidden){ openList(gi.value); return; } activeIdx=Math.min(activeIdx+1,opts.length-1); setActive(opts); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); activeIdx=Math.max(activeIdx-1,0); setActive(opts); }
+    else if(e.key==='Enter'){ e.preventDefault(); const pick=activeIdx>=0?opts[activeIdx]:opts[0]; if(pick) selectKey(pick.dataset.key); }
+    else if(e.key==='Escape'){ gi.value=S.key||''; closeList(); }
+  });
+  gl.addEventListener('mousedown',e=>{ const li=e.target.closest('li[data-key]'); if(!li) return; e.preventDefault(); selectKey(li.dataset.key); });
+  gi.addEventListener('blur',()=>{ setTimeout(()=>{ if(document.activeElement!==gi){ gi.value=S.key||''; closeList(); } },120); });
+})();
 $('#feed').addEventListener('click',e=>{
   const st=e.target.closest('.star');
   if(st){ const id=st.dataset.id; if(fav.has(id)) fav.delete(id); else fav.add(id); saveFavs();
