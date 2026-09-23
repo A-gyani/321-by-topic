@@ -66,7 +66,7 @@ h1 em{font-style:italic;font-weight:400;color:var(--idea)}
 .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:22px 0 12px}
 .head h2{font-family:var(--serif);font-weight:600;font-size:26px;margin:0;letter-spacing:-.01em}
 .head span{color:var(--muted);font-size:13px;white-space:nowrap}
-.feed{display:grid;gap:14px;padding-bottom:60px}
+.feed{display:grid;gap:14px;padding-bottom:24px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 20px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
 .card:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c)}
 .card.idea{--c:var(--idea);--soft:var(--idea-soft)} .card.quote{--c:var(--quote);--soft:var(--quote-soft)} .card.question{--c:var(--question);--soft:var(--question-soft)}
@@ -84,7 +84,19 @@ h1 em{font-style:italic;font-weight:400;color:var(--idea)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
 .chip{border:0;background:var(--chip);color:var(--chip-ink);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:500;cursor:pointer}
 .chip:hover{background:var(--chip-on);color:var(--chip-on-ink)}
+.star{position:absolute;top:12px;right:12px;width:34px;height:34px;border:0;background:transparent;color:var(--muted);font-size:21px;line-height:1;cursor:pointer;border-radius:50%;display:grid;place-items:center;padding:0;transition:color .15s ease,transform .12s ease}
+.star:hover{color:#e8a726;transform:scale(1.15)}
+.star.on{color:#e8a726}
 .empty{color:var(--muted);text-align:center;padding:50px 0;font-style:italic}
+.more{display:flex;justify-content:center;padding:6px 0 44px}
+.more:empty{display:none}
+.loadmore{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:11px 22px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:var(--shadow)}
+.loadmore:hover{border-color:var(--idea);color:var(--idea)}
+.loadmore span{color:var(--muted);font-weight:400}
+.totop{position:fixed;right:20px;bottom:20px;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer;display:grid;place-items:center;opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .2s ease,transform .2s ease;z-index:50}
+.totop.show{opacity:1;transform:none;pointer-events:auto}
+.totop svg{width:20px;height:20px}
+.totop:hover{border-color:var(--idea);color:var(--idea)}
 footer{font-size:12px;color:var(--muted);padding:24px 0 48px;border-top:1px solid var(--line)}
 footer a{color:var(--muted)}
 @media (max-width:520px){
@@ -122,6 +134,7 @@ footer a{color:var(--muted)}
       <div class="pills" id="view" style="margin-left:auto">
         <button class="pill" data-v="topics" aria-pressed="true">By topic</button>
         <button class="pill" data-v="authors">By author</button>
+        <button class="pill" id="saved" title="Show your saved entries">☆ Saved</button>
         <button class="pill" id="sort" title="Toggle order">Newest first</button>
         <button class="pill" id="random" title="Show one random entry">🎲</button>
       </div>
@@ -129,14 +142,25 @@ footer a{color:var(--muted)}
   </div>
   <div class="head"><h2 id="title"></h2><span id="count"></span></div>
   <div class="feed" id="feed"></div>
+  <div class="more" id="more"></div>
   <footer>All text is by James Clear and the quoted authors. Every entry links to its original issue at <a href="https://jamesclear.com/3-2-1">jamesclear.com/3-2-1</a>. This is a personal reading index.</footer>
 </div>
+<button class="totop" id="totop" aria-label="Back to top" title="Back to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
 <script src="data.js"></script>
 <script>
-const S = {view:'topics', key:null, kind:'all', q:'', random:null, newest:true};
+const PAGE = 30;
+const S = {view:'topics', key:null, kind:'all', q:'', random:null, newest:true, shown:PAGE, saved:false};
 const $ = s=>document.querySelector(s);
 const esc = s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const KIND = {idea:'Idea', quote:'Quote', question:'Question'};
+
+// favourites (saved to this browser)
+let fav = new Set();
+try{ fav = new Set(JSON.parse(localStorage.getItem('favs')||'[]')); }catch(e){}
+function saveFavs(){ try{ localStorage.setItem('favs', JSON.stringify([...fav])); }catch(e){} }
+function hash(s){ let h=5381; for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0).toString(36); }
+function favId(it){ return it.url+'|'+it.kind+'|'+hash(it.text); }
+function updateSavedPill(){ const b=$('#saved'); b.textContent=(S.saved?'★':'☆')+' Saved'+(fav.size?` (${fav.size})`:''); b.setAttribute('aria-pressed',S.saved); }
 
 // theme
 const root = document.documentElement;
@@ -163,7 +187,9 @@ function groups(){
 }
 function matches(it){
   if(S.kind!=='all' && it.kind!==S.kind) return false;
+  if(S.saved && !fav.has(favId(it))) return false;
   if(S.q){ const h=(it.text+' '+(it.author||'')+' '+(it.lead||'')+' '+it.topics.join(' ')).toLowerCase(); return h.includes(S.q); }
+  if(S.saved) return true;
   if(S.view==='topics') return it.topics.includes(S.key);
   return it.kind==='quote' && it.author===S.key;
 }
@@ -180,28 +206,49 @@ function card(it){
   if(it.kind==='quote'){
     body = `<div class="lead">${esc(it.lead)}</div><div class="text">${paras(it.text)}</div><div class="by">${esc(it.author)}${it.source?` <span>· ${esc(it.source)}</span>`:''}</div>`;
   } else body = `<div class="text">${paras(it.text)}</div>`;
-  return `<article class="card ${it.kind}"><span class="kind">${KIND[it.kind]}</span>${body}${foot}</article>`;
+  const id=favId(it), on=fav.has(id);
+  const star=`<button class="star${on?' on':''}" data-id="${id}" aria-pressed="${on}" aria-label="Save this entry" title="${on?'Saved · click to remove':'Save'}">${on?'★':'☆'}</button>`;
+  return `<article class="card ${it.kind}"><span class="kind">${KIND[it.kind]}</span>${star}${body}${foot}</article>`;
 }
 function renderFeed(){
   let list, title;
   if(S.random){ list=[S.random]; title='A random pick'; }
-  else { list = DATA.filter(matches); if(S.newest) list = list.slice().reverse(); title = S.q ? `Search: “${esc(S.q)}”` : (S.key||''); }
+  else {
+    list = DATA.filter(matches).sort((a,b)=> S.newest ? b.iso.localeCompare(a.iso) : a.iso.localeCompare(b.iso));
+    title = S.q ? `Search: “${esc(S.q)}”` : (S.saved ? '★ Saved' : (S.key||''));
+  }
   $('#title').innerHTML = title;
   $('#count').textContent = `${list.length} ${list.length===1?'entry':'entries'}`;
-  $('#feed').innerHTML = list.length ? list.map(card).join('') : '<p class="empty">Nothing here yet.</p>';
+  const shown = S.random ? list : list.slice(0, S.shown);
+  const empty = S.saved ? 'No saved entries yet. Tap the ☆ on any card to save it here.' : 'Nothing here yet.';
+  $('#feed').innerHTML = shown.length ? shown.map(card).join('') : `<p class="empty">${empty}</p>`;
+  const more = list.length - shown.length;
+  $('#more').innerHTML = more>0 ? `<button class="loadmore" id="loadmore">Load ${Math.min(PAGE,more)} more <span>· showing ${shown.length} of ${list.length}</span></button>` : '';
 }
 function syncPills(){
   document.querySelectorAll('#kind .pill').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===S.kind));
   document.querySelectorAll('#view .pill[data-v]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===S.view));
 }
-function render(){ renderSelect(); renderFeed(); }
-$('#group').onchange=e=>{ S.key=e.target.value; S.q=''; S.random=null; $('#q').value=''; renderFeed(); };
-$('#feed').addEventListener('click',e=>{ const b=e.target.closest('.chip'); if(!b) return; S.view='topics'; S.key=b.dataset.topic; S.q=''; S.random=null; $('#q').value=''; syncPills(); render(); window.scrollTo({top:$('#title').offsetTop-80,behavior:'smooth'}); });
-$('#kind').addEventListener('click',e=>{ const b=e.target.closest('.pill'); if(!b) return; S.kind=b.dataset.k; S.random=null; syncPills(); render(); });
-$('#view').addEventListener('click',e=>{ const b=e.target.closest('.pill[data-v]'); if(!b) return; S.view=b.dataset.v; S.key=null; S.random=null; syncPills(); render(); });
-$('#sort').onclick=()=>{ S.newest=!S.newest; $('#sort').textContent = S.newest?'Newest first':'Oldest first'; renderFeed(); };
-$('#random').onclick=()=>{ S.random = DATA[Math.floor(Math.random()*DATA.length)]; renderFeed(); };
-$('#q').addEventListener('input',e=>{ S.q=e.target.value.trim().toLowerCase(); S.random=null; renderFeed(); });
+function render(){ $('.select').style.display = S.saved ? 'none' : ''; renderSelect(); renderFeed(); }
+$('#group').onchange=e=>{ S.key=e.target.value; S.q=''; S.random=null; S.saved=false; S.shown=PAGE; $('#q').value=''; updateSavedPill(); render(); };
+$('#feed').addEventListener('click',e=>{
+  const st=e.target.closest('.star');
+  if(st){ const id=st.dataset.id; if(fav.has(id)) fav.delete(id); else fav.add(id); saveFavs();
+    const on=fav.has(id); st.classList.toggle('on',on); st.setAttribute('aria-pressed',on); st.textContent=on?'★':'☆'; st.title=on?'Saved · click to remove':'Save';
+    updateSavedPill(); if(S.saved) renderFeed(); return; }
+  const b=e.target.closest('.chip'); if(!b) return;
+  S.view='topics'; S.key=b.dataset.topic; S.q=''; S.random=null; S.saved=false; S.shown=PAGE; $('#q').value=''; updateSavedPill(); syncPills(); render(); window.scrollTo({top:$('#title').offsetTop-80,behavior:'smooth'}); });
+$('#kind').addEventListener('click',e=>{ const b=e.target.closest('.pill'); if(!b) return; S.kind=b.dataset.k; S.random=null; S.shown=PAGE; syncPills(); render(); });
+$('#view').addEventListener('click',e=>{ const b=e.target.closest('.pill[data-v]'); if(!b) return; S.view=b.dataset.v; S.key=null; S.random=null; S.saved=false; S.shown=PAGE; updateSavedPill(); syncPills(); render(); });
+$('#saved').onclick=()=>{ S.saved=!S.saved; S.key=null; S.q=''; S.random=null; S.shown=PAGE; $('#q').value=''; updateSavedPill(); render(); window.scrollTo({top:0,behavior:'smooth'}); };
+$('#sort').onclick=()=>{ S.newest=!S.newest; S.shown=PAGE; $('#sort').textContent = S.newest?'Newest first':'Oldest first'; renderFeed(); };
+$('#random').onclick=()=>{ S.random = DATA[Math.floor(Math.random()*DATA.length)]; S.saved=false; updateSavedPill(); renderFeed(); };
+$('#q').addEventListener('input',e=>{ S.q=e.target.value.trim().toLowerCase(); S.random=null; S.shown=PAGE; renderFeed(); });
+$('#more').addEventListener('click',e=>{ if(!e.target.closest('#loadmore')) return; S.shown+=PAGE; renderFeed(); });
+const totop = $('#totop');
+addEventListener('scroll',()=>{ totop.classList.toggle('show', scrollY>600); }, {passive:true});
+totop.onclick=()=>window.scrollTo({top:0,behavior:'smooth'});
+updateSavedPill();
 render();
 </script>
 </body>
